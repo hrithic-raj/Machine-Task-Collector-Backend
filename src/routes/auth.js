@@ -119,6 +119,7 @@ router.post('/register', async (req, res) => {
 router.get('/verify-email/:token', async (req, res) => {
   try {
     const { token } = req.params;
+    console.log('Email verification attempt with token:', token);
 
     // Find user with this verification token
     const user = await User.findOne({
@@ -127,17 +128,30 @@ router.get('/verify-email/:token', async (req, res) => {
     });
 
     if (!user) {
+      console.log('Verification failed: Invalid or expired token');
       return res.status(400).json({
         success: false,
         message: 'Invalid or expired verification token',
       });
     }
 
+    console.log('Found user:', user._id, 'Email:', user.email);
+
+    // If already verified, return success (idempotent)
+    if (user.isVerified) {
+      console.log('User already verified, returning success');
+      return res.json({
+        success: true,
+        message: 'Email already verified. You can now log in.',
+      });
+    }
+
     // Mark user as verified
     user.isVerified = true;
-    user.verificationToken = undefined;
-    user.verificationExpires = undefined;
+    // Don't clear verificationToken/verificationExpires to allow idempotent calls
     await user.save();
+
+    console.log('User verified successfully:', user._id);
 
     // For API response (if called via frontend)
     res.json({
