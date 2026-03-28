@@ -153,10 +153,15 @@ router.get('/:id/download', protect, async (req, res) => {
     tempDir = path.join(os.tmpdir(), `task-${taskId}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`);
     await fs.ensureDir(tempDir);
 
-    // Generate markdown content
-    const markdownContent = generateTaskMarkdown(task);
-    const markdownPath = path.join(tempDir, 'TASK_DETAILS.md');
-    await fs.writeFile(markdownPath, markdownContent, 'utf-8');
+    // Determine format from environment variable
+    const format = DOWNLOAD_FORMAT.toLowerCase() === 'html' ? 'html' : 'md';
+    const fileExtension = format === 'html' ? 'html' : 'md';
+    const fileName = format === 'html' ? 'TASK_DETAILS.html' : 'TASK_DETAILS.md';
+
+    // Generate content based on format
+    const fileContent = format === 'html' ? generateTaskHTML(task) : generateTaskMarkdown(task);
+    const filePath = path.join(tempDir, fileName);
+    await fs.writeFile(filePath, fileContent, 'utf-8');
 
     // Set response headers for ZIP download
     const zipFilename = `task-${task.title.replace(/[^a-z0-9]/gi, '_')}-${taskId}.zip`;
@@ -187,8 +192,8 @@ router.get('/:id/download', protect, async (req, res) => {
     // Pipe archive to response
     archive.pipe(res);
 
-    // Append markdown file
-    archive.file(markdownPath, { name: 'TASK_DETAILS.md' });
+    // Append documentation file (markdown or HTML)
+    archive.file(filePath, { name: fileName });
 
     // Append attachment files if any
     if (task.files && task.files.length > 0) {
@@ -248,6 +253,9 @@ router.get('/:id/download', protect, async (req, res) => {
   }
 });
 
+// Get download format from environment (default: 'md')
+const DOWNLOAD_FORMAT = process.env.DOWNLOAD_FORMAT || 'md';
+
 // Helper function to generate markdown content
 function generateTaskMarkdown(task) {
   const techStackList = task.techStack ? task.techStack.join(', ') : 'None';
@@ -288,6 +296,230 @@ ${task.body}
 ${task.files && task.files.length > 0 ? `This task contains ${task.files.length} attachment(s) in the \`attachments/\` folder.` : 'No attachments.'}
 
 *Generated on ${new Date().toLocaleString()} from Machine Task Collector*
+`;
+}
+
+// Helper function to generate HTML content
+function generateTaskHTML(task) {
+  const techStackList = task.techStack
+    ? task.techStack
+        .map((stack) => `<span class="tech-badge">${escapeHtml(stack)}</span>`)
+        .join('')
+    : '<span class="tech-badge">None</span>';
+  const tagsList = task.tags
+    ? task.tags.map((t) => `<span class="tag">#${escapeHtml(t.name)}</span>`).join(' ')
+    : '<span class="tag">None</span>';
+
+  const escapeHtml = (str) => {
+    if (!str) return '';
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  };
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(task.title)} - Machine Task</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 40px 20px;
+      background: #f9f9f9;
+    }
+    .container {
+      background: white;
+      padding: 40px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #1a1a1a;
+      font-size: 2em;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 2px solid #e0e0e0;
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px;
+      padding: 20px;
+      background: #f5f5f5;
+      border-radius: 6px;
+    }
+    .meta-item {
+      display: flex;
+      flex-direction: column;
+    }
+    .meta-label {
+      font-weight: 600;
+      color: #666;
+      font-size: 0.875em;
+      margin-bottom: 4px;
+    }
+    .meta-value {
+      color: #1a1a1a;
+      word-break: break-word;
+    }
+    .tech-stack, .tags {
+      margin: 24px 0;
+    }
+    .section-label {
+      font-weight: 600;
+      color: #444;
+      margin-bottom: 12px;
+      font-size: 1.1em;
+    }
+    .tech-badge {
+      display: inline-block;
+      background: #2563eb;
+      color: white;
+      padding: 6px 14px;
+      border-radius: 20px;
+      margin: 4px 4px 4px 0;
+      font-size: 0.875em;
+      font-weight: 500;
+    }
+    .tag {
+      display: inline-block;
+      background: #e5e7eb;
+      color: #374151;
+      padding: 6px 14px;
+      border-radius: 20px;
+      margin: 4px 4px 4px 0;
+      font-size: 0.875em;
+    }
+    .description {
+      margin: 32px 0;
+    }
+    .description-label {
+      font-weight: 600;
+      color: #444;
+      margin-bottom: 12px;
+      font-size: 1.1em;
+    }
+    .description-content {
+      background: #f9f9f9;
+      padding: 24px;
+      border-radius: 6px;
+      border-left: 4px solid #2563eb;
+    }
+    .attachments {
+      margin: 32px 0;
+      padding: 20px;
+      background: #f0f9ff;
+      border-radius: 6px;
+      border: 1px dashed #3b82f6;
+    }
+    .footer {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid #e0e0e0;
+      color: #888;
+      font-size: 0.875em;
+      text-align: center;
+    }
+    .company-info {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .company-info span {
+      margin-right: 8px;
+    }
+    .company-info span:not(:last-child)::after {
+      content: "•";
+      margin-left: 8px;
+      color: #999;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>${escapeHtml(task.title)}</h1>
+
+    <div class="meta-grid">
+      <div class="meta-item">
+        <span class="meta-label">Company</span>
+        <span class="meta-value">${escapeHtml(task.company?.name || 'Unknown Company')}</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Location</span>
+        <span class="meta-value">${escapeHtml(task.company?.place || 'Not specified')}</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Contact Email</span>
+        <span class="meta-value">${escapeHtml(task.company?.contactEmail || 'Not specified')}</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Contact Phone</span>
+        <span class="meta-value">${escapeHtml(task.company?.contactPhone || 'Not specified')}</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Tech Stack</span>
+        <span class="meta-value">${techStackList}</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Tags</span>
+        <span class="meta-value">${tagsList}</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Submitted By</span>
+        <span class="meta-value">${escapeHtml(task.submittedBy?.name || 'Unknown')}</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Email</span>
+        <span class="meta-value">${escapeHtml(task.submittedBy?.email || 'Not specified')}</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Created</span>
+        <span class="meta-value">${new Date(task.createdAt).toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        })}</span>
+      </div>
+    </div>
+
+    <div class="description">
+      <div class="description-label">Description</div>
+      <div class="description-content">${task.body}</div>
+    </div>
+
+    <div class="attachments">
+      <div class="section-label">
+        Attachments ${task.files && task.files.length > 0 ? `(${task.files.length})` : ''}
+      </div>
+      ${task.files && task.files.length > 0
+        ? '<p>The attachments are included in the <code>attachments/</code> folder of this ZIP archive.</p>'
+        : '<p>No attachments.</p>'
+      }
+    </div>
+
+    <div class="footer">
+      Generated on ${new Date().toLocaleString()} from Machine Task Collector
+    </div>
+  </div>
+</body>
+</html>
 `;
 }
 
