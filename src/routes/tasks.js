@@ -301,15 +301,7 @@ ${task.files && task.files.length > 0 ? `This task contains ${task.files.length}
 
 // Helper function to generate HTML content
 function generateTaskHTML(task) {
-  const techStackList = task.techStack
-    ? task.techStack
-        .map((stack) => `<span class="tech-badge">${escapeHtml(stack)}</span>`)
-        .join('')
-    : '<span class="tech-badge">None</span>';
-  const tagsList = task.tags
-    ? task.tags.map((t) => `<span class="tag">#${escapeHtml(t.name)}</span>`).join(' ')
-    : '<span class="tag">None</span>';
-
+  // Define escapeHtml first before using it
   const escapeHtml = (str) => {
     if (!str) return '';
     return str
@@ -319,6 +311,15 @@ function generateTaskHTML(task) {
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
   };
+
+  const techStackList = task.techStack
+    ? task.techStack
+        .map((stack) => `<span class="tech-badge">${escapeHtml(stack)}</span>`)
+        .join('')
+    : '<span class="tech-badge">None</span>';
+  const tagsList = task.tags
+    ? task.tags.map((t) => `<span class="tag">#${escapeHtml(t.name)}</span>`).join(' ')
+    : '<span class="tag">None</span>';
 
   return `<!DOCTYPE html>
 <html lang="en">
