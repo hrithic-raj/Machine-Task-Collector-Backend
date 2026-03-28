@@ -5,6 +5,7 @@ const Company = require('../models/Company');
 const Tag = require('../models/Tag');
 const { protect } = require('../middleware/auth');
 const { uploadMultiple, uploadErrorHandler } = require('../middleware/upload');
+const { uploadToCloudinary, deleteFromCloudinary } = require('../config/cloudinary');
 
 // GET /api/tasks - Get all tasks with search, filter, and pagination
 router.get('/', protect, async (req, res) => {
@@ -113,6 +114,19 @@ router.get('/:id', protect, async (req, res) => {
 // POST /api/tasks - Create new task (with file uploads)
 router.post('/', protect, uploadMultiple, uploadErrorHandler, async (req, res) => {
   try {
+    console.log('=== Task Creation Start ===');
+    console.log('User:', req.user._id);
+    console.log('Body fields:', {
+      title: req.body.title,
+      body: req.body.body ? 'present' : 'missing',
+      techStack: req.body.techStack,
+      companyId: req.body.companyId,
+      newCompanyName: req.body.newCompanyName,
+      tagIds: req.body.tagIds,
+      newTagNames: req.body.newTagNames,
+    });
+    console.log('Files uploaded (multer):', req.files?.length || 0);
+
     const {
       title,
       body,
@@ -128,6 +142,7 @@ router.post('/', protect, uploadMultiple, uploadErrorHandler, async (req, res) =
 
     // Validate required fields
     if (!title || !body) {
+      console.error('Validation failed: title or body missing');
       return res.status(400).json({
         success: false,
         message: 'Title and body are required',
@@ -137,6 +152,7 @@ router.post('/', protect, uploadMultiple, uploadErrorHandler, async (req, res) =
     // Handle company - either use existing or create new
     let company;
     if (newCompanyName) {
+      console.log('Creating new company:', newCompanyName);
       // Create new company
       company = await Company.create({
         name: newCompanyName.trim(),
@@ -145,16 +161,21 @@ router.post('/', protect, uploadMultiple, uploadErrorHandler, async (req, res) =
         contactPhone: newCompanyPhone || '',
         createdBy: req.user._id,
       });
+      console.log('Company created:', company._id);
     } else if (companyId) {
+      console.log('Using existing company:', companyId);
       // Use existing company
       company = await Company.findById(companyId);
       if (!company) {
+        console.error('Company not found:', companyId);
         return res.status(400).json({
           success: false,
           message: 'Selected company not found',
         });
       }
+      console.log('Company found:', company._id);
     } else {
+      console.error('No company specified');
       return res.status(400).json({
         success: false,
         message: 'Please select or create a company',
@@ -163,15 +184,20 @@ router.post('/', protect, uploadMultiple, uploadErrorHandler, async (req, res) =
 
     // Handle tags - get existing tags or create new ones
     let tags = [];
+    console.log('Processing tags - tagIds:', tagIds, 'newTagNames:', newTagNames);
     if (tagIds) {
+      const tagIdArray = typeof tagIds === 'string' ? [tagIds] : tagIds;
+      console.log('Fetching existing tags:', tagIdArray);
       const existingTags = await Tag.find({
-        _id: { $in: typeof tagIds === 'string' ? [tagIds] : tagIds },
+        _id: { $in: tagIdArray },
       });
       tags = existingTags.map((t) => t._id);
+      console.log('Found existing tags:', tags);
     }
 
     if (newTagNames) {
       const namesToCreate = typeof newTagNames === 'string' ? [newTagNames] : newTagNames;
+      console.log('Creating new tags:', namesToCreate);
       for (const name of namesToCreate) {
         if (!name.trim()) continue;
 
@@ -182,19 +208,73 @@ router.post('/', protect, uploadMultiple, uploadErrorHandler, async (req, res) =
             name: name.trim().toLowerCase(),
             createdBy: req.user._id,
           });
+          console.log('Created new tag:', tag._id, tag.name);
+        } else {
+          console.log('Tag already exists:', tag._id, tag.name);
         }
         tags.push(tag._id);
       }
     }
+    console.log('Final tag IDs to assign to task:', tags);
 
-    // Prepare file metadata from multer
-    const files = req.files ? req.files.map((file) => ({
-      filename: file.filename,
-      originalName: file.originalname,
-      path: file.path,
-      mimetype: file.mimetype,
-      size: file.size,
-    })) : [];
+    // Upload files to Cloudinary and prepare metadata
+    let files = [];
+    if (req.files && req.files.length > 0) {
+      console.log(`Uploading ${req.files.length} files to Cloudinary...`);
+      try {
+        const uploadPromises = req.files.map(async (file, index) => {
+          // Determine resource_type: use 'raw' for PDFs, 'auto' for others
+          const isPdf = file.mimetype === 'application/pdf';
+          const resource_type = isPdf ? 'raw' : 'auto';
+
+          console.log(`File ${index + 1}: ${file.originalname} (${file.mimetype})`);
+          console.log(`  -> Uploading to folder 'MachineTasks' as ${resource_type}`);
+
+          try {
+            const result = await uploadToCloudinary(file.path, {
+              folder: 'MachineTasks',
+              resource_type,
+            });
+            console.log(`  Uploaded! Public ID: ${result.public_id}`);
+            console.log(`  Folder in response: ${result.folder || 'root'}`);
+            console.log(`  URL: ${result.secure_url}`);
+
+            return {
+              url: result.secure_url,
+              public_id: result.public_id,
+              originalName: file.originalname,
+              mimetype: file.mimetype,
+              size: file.size,
+            };
+          } finally {
+            // Clean up local temp file after upload attempt (success or failure)
+            try {
+              if (require('fs').existsSync(file.path)) {
+                require('fs').unlinkSync(file.path);
+                console.log(`  Cleaned up temp file: ${file.path}`);
+              }
+            } catch (e) {
+              console.error('Failed to cleanup temp file:', file.path);
+            }
+          }
+        });
+        files = await Promise.all(uploadPromises);
+        console.log('All files uploaded to Cloudinary successfully. Files array:', files.length);
+      } catch (error) {
+        console.error('Cloudinary upload error:', error);
+        // Delete task and related files if already created? We're before task creation
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to upload files to cloud storage',
+          error:
+            process.env.NODE_ENV === 'development'
+              ? error.message
+              : 'Check Cloudinary configuration and credentials',
+        });
+      }
+    } else {
+      console.log('No files to upload');
+    }
 
     // Parse techStack (expecting array or comma-separated string)
     let techStackArray = [];
@@ -207,6 +287,14 @@ router.post('/', protect, uploadMultiple, uploadErrorHandler, async (req, res) =
     }
 
     // Create task
+    console.log('Creating task with data:', {
+      title: title.trim(),
+      techStack: techStackArray,
+      company: company._id,
+      tags: tags,
+      filesCount: files.length,
+      submittedBy: req.user._id,
+    });
     const task = await MachineTask.create({
       title: title.trim(),
       body,
@@ -216,12 +304,14 @@ router.post('/', protect, uploadMultiple, uploadErrorHandler, async (req, res) =
       files,
       submittedBy: req.user._id,
     });
+    console.log('Task created successfully:', task._id);
 
     // Populate response
     await task.populate('company', 'name place contactEmail contactPhone');
     await task.populate('tags', 'name');
     await task.populate('submittedBy', 'name email');
 
+    console.log('Task populated, sending response');
     res.status(201).json({
       success: true,
       message: 'Task created successfully',
@@ -348,16 +438,84 @@ router.put('/:id', protect, uploadMultiple, uploadErrorHandler, async (req, res)
     task.company = company._id;
     task.tags = tags;
 
-    // Add new files if uploaded
+    // Handle file deletions (if any files marked for removal)
+    if (req.body.filesToDelete) {
+      const filesToDeleteIds = Array.isArray(req.body.filesToDelete)
+        ? req.body.filesToDelete
+        : [req.body.filesToDelete];
+
+      console.log(`Deleting ${filesToDeleteIds.length} files:`, filesToDeleteIds);
+
+      for (const fileId of filesToDeleteIds) {
+        try {
+          const fileToRemove = task.files.find((f) => f._id.toString() === fileId);
+          if (fileToRemove) {
+            // Delete from Cloudinary if has public_id
+            if (fileToRemove.public_id) {
+              await deleteFromCloudinary(fileToRemove.public_id);
+              console.log(`Deleted from Cloudinary: ${fileToRemove.public_id}`);
+            } else if (fileToRemove.path) {
+              // Delete local file (legacy)
+              if (require('fs').existsSync(fileToRemove.path)) {
+                require('fs').unlinkSync(fileToRemove.path);
+                console.log(`Deleted local file: ${fileToRemove.path}`);
+              }
+            }
+            // Remove from task.files array
+            task.files = task.files.filter((f) => f._id.toString() !== fileId);
+          }
+        } catch (err) {
+          console.error(`Failed to delete file ${fileId}:`, err);
+          // Continue with other deletions
+        }
+      }
+    }
+
+    // Add new files if uploaded - upload to Cloudinary first
     if (req.files && req.files.length > 0) {
-      const newFiles = req.files.map((file) => ({
-        filename: file.filename,
-        originalName: file.originalname,
-        path: file.path,
-        mimetype: file.mimetype,
-        size: file.size,
-      }));
-      task.files = [...task.files, ...newFiles];
+      try {
+        const uploadPromises = req.files.map(async (file) => {
+          const isPdf = file.mimetype === 'application/pdf';
+          const resource_type = isPdf ? 'raw' : 'auto';
+
+          try {
+            const result = await uploadToCloudinary(file.path, {
+              folder: 'MachineTasks',
+              resource_type,
+            });
+
+            console.log("UPLOAD RESULT:", result);
+            return {
+              url: result.secure_url,
+              public_id: result.public_id,
+              originalName: file.originalname,
+              mimetype: file.mimetype,
+              size: file.size,
+            };
+          } finally {
+            // Clean up local temp file
+            try {
+              if (require('fs').existsSync(file.path)) {
+                require('fs').unlinkSync(file.path);
+              }
+            } catch (e) {
+              console.error('Failed to cleanup temp file:', file.path);
+            }
+          }
+        });
+        const newFiles = await Promise.all(uploadPromises);
+        task.files = [...task.files, ...newFiles];
+      } catch (error) {
+        console.error('Cloudinary upload error:', error);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to upload files to cloud storage',
+          error:
+            process.env.NODE_ENV === 'development'
+              ? error.message
+              : 'Check Cloudinary configuration and credentials',
+        });
+      }
     }
 
     await task.save();
@@ -414,17 +572,23 @@ router.delete('/:id', protect, async (req, res) => {
       });
     }
 
-    // Delete associated files
+    // Delete associated files (from Cloudinary if they have public_id, otherwise local)
     if (task.files && task.files.length > 0) {
-      task.files.forEach((file) => {
+      for (const file of task.files) {
         try {
-          if (require('fs').existsSync(file.path)) {
-            require('fs').unlinkSync(file.path);
+          if (file.public_id) {
+            // Delete from Cloudinary
+            await deleteFromCloudinary(file.public_id);
+          } else if (file.path) {
+            // Delete from local storage (legacy files)
+            if (require('fs').existsSync(file.path)) {
+              require('fs').unlinkSync(file.path);
+            }
           }
         } catch (e) {
-          console.error('Failed to delete file:', file.path);
+          console.error('Failed to delete file:', file.path || file.public_id);
         }
-      });
+      }
     }
 
     await task.deleteOne();

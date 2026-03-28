@@ -30,11 +30,13 @@ const MachineTaskSchema = new mongoose.Schema(
     ],
     files: [
       {
-        filename: String,
+        url: String,
+        public_id: String,
         originalName: String,
-        path: String,
         mimetype: String,
         size: Number,
+        // Keep 'path' for backward compatibility with old local files
+        path: { type: String, default: '' },
       },
     ],
     submittedBy: {
