@@ -6,6 +6,11 @@ const Tag = require('../models/Tag');
 const { protect } = require('../middleware/auth');
 const { uploadMultiple, uploadErrorHandler } = require('../middleware/upload');
 const { uploadToCloudinary, deleteFromCloudinary } = require('../config/cloudinary');
+const fs = require('fs-extra');
+const path = require('path');
+const archiver = require('archiver');
+const axios = require('axios');
+const os = require('os');
 
 // GET /api/tasks - Get all tasks with search, filter, and pagination
 router.get('/', protect, async (req, res) => {
@@ -110,6 +115,181 @@ router.get('/:id', protect, async (req, res) => {
     });
   }
 });
+
+// GET /api/tasks/:id/download - Download task as ZIP with markdown and attachments
+router.get('/:id/download', protect, async (req, res) => {
+  const taskId = req.params.id;
+  let tempDir;
+  let cleaned = false;
+
+  const cleanup = async () => {
+    if (cleaned) return;
+    cleaned = true;
+    if (tempDir) {
+      try {
+        await fs.remove(tempDir);
+      } catch (e) {
+        console.error('Failed to cleanup temp dir:', e.message);
+      }
+    }
+  };
+
+  try {
+    // Fetch task with all populated data
+    const task = await MachineTask.findById(taskId)
+      .populate('company', 'name place contactEmail contactPhone')
+      .populate('tags', 'name')
+      .populate('submittedBy', 'name email');
+
+    if (!task) {
+      await cleanup();
+      return res.status(404).json({
+        success: false,
+        message: 'Task not found',
+      });
+    }
+
+    // Create a temporary directory for this download (use OS temp dir for compatibility)
+    tempDir = path.join(os.tmpdir(), `task-${taskId}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`);
+    await fs.ensureDir(tempDir);
+
+    // Generate markdown content
+    const markdownContent = generateTaskMarkdown(task);
+    const markdownPath = path.join(tempDir, 'TASK_DETAILS.md');
+    await fs.writeFile(markdownPath, markdownContent, 'utf-8');
+
+    // Set response headers for ZIP download
+    const zipFilename = `task-${task.title.replace(/[^a-z0-9]/gi, '_')}-${taskId}.zip`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${zipFilename}"`);
+
+    // Create ZIP archive and pipe to response
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    // Handle archive errors
+    archive.on('error', (err) => {
+      console.error('Archive error:', err);
+      cleanup();
+      if (!res.headersSent) {
+        res.status(500).json({
+          success: false,
+          message: 'Error creating archive',
+        });
+      } else {
+        res.end();
+      }
+    });
+
+    // Cleanup when archive finishes or response closes
+    archive.on('end', cleanup);
+    res.on('close', cleanup);
+
+    // Pipe archive to response
+    archive.pipe(res);
+
+    // Append markdown file
+    archive.file(markdownPath, { name: 'TASK_DETAILS.md' });
+
+    // Append attachment files if any
+    if (task.files && task.files.length > 0) {
+      const filesDir = path.join(tempDir, 'attachments');
+      await fs.ensureDir(filesDir);
+
+      for (const file of task.files) {
+        const fileUrl = file.url || file.path;
+        const fileName = file.originalName || `file-${file._id}`;
+        const fileDestPath = path.join(filesDir, fileName);
+
+        try {
+          // Download file from URL (Cloudinary or local)
+          if (fileUrl && fileUrl.startsWith('http')) {
+            const response = await axios.get(fileUrl, {
+              responseType: 'stream',
+            });
+            const writer = fs.createWriteStream(fileDestPath);
+            response.data.pipe(writer);
+
+            await new Promise((resolve, reject) => {
+              writer.on('finish', resolve);
+              writer.on('error', reject);
+            });
+          } else if (file.path) {
+            // Local file (legacy) - copy if exists
+            const localPath = path.join(__dirname, '..', '..', file.path);
+            if (await fs.pathExists(localPath)) {
+              await fs.copy(localPath, fileDestPath);
+            }
+          }
+
+          // Add file to archive with relative path
+          archive.file(fileDestPath, {
+            name: path.join('attachments', fileName),
+          });
+        } catch (fileError) {
+          console.error(`Failed to download file ${fileName}:`, fileError.message);
+          // Continue with other files - don't fail entire archive
+        }
+      }
+    }
+
+    // Finalize archive
+    await archive.finalize();
+  } catch (error) {
+    console.error('Download error:', error);
+    await cleanup();
+
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        message: 'Server error while generating download',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      });
+    }
+  }
+});
+
+// Helper function to generate markdown content
+function generateTaskMarkdown(task) {
+  const techStackList = task.techStack ? task.techStack.join(', ') : 'None';
+  const tagsList = task.tags ? task.tags.map((t) => `#${t.name}`).join(' ') : 'None';
+
+  return `# ${task.title}
+
+## Overview
+
+**Company:** ${task.company?.name || 'Unknown Company'}
+${task.company?.place ? `**Location:** ${task.company.place}` : ''}
+${task.company?.contactEmail ? `**Contact Email:** ${task.company.contactEmail}` : ''}
+${task.company?.contactPhone ? `**Contact Phone:** ${task.company.contactPhone}` : ''}
+
+**Tech Stack:** ${techStackList}
+
+**Tags:** ${tagsList}
+
+**Submitted By:** ${task.submittedBy?.name || 'Unknown'}
+${task.submittedBy?.email ? `**Email:** ${task.submittedBy.email}` : ''}
+
+**Created:** ${new Date(task.createdAt).toLocaleDateString('en-US', {
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+})}
+
+## Description
+
+${task.body}
+
+---
+
+## Attachments
+
+${task.files && task.files.length > 0 ? `This task contains ${task.files.length} attachment(s) in the \`attachments/\` folder.` : 'No attachments.'}
+
+*Generated on ${new Date().toLocaleString()} from Machine Task Collector*
+`;
+}
 
 // POST /api/tasks - Create new task (with file uploads)
 router.post('/', protect, uploadMultiple, uploadErrorHandler, async (req, res) => {
