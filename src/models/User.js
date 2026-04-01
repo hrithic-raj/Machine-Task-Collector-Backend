@@ -27,12 +27,25 @@ const UserSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['intern', 'admin'],
+      enum: ['intern', 'admin', 'super_admin'],
       default: 'intern',
     },
     isVerified: {
       type: Boolean,
       default: false,
+    },
+    isApproved: {
+      type: Boolean,
+      default: false,
+    },
+    isBlocked: {
+      type: Boolean,
+      default: false,
+    },
+    blockedAt: Date,
+    blockedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
     },
     verificationToken: String,
     verificationExpires: Date,
@@ -61,6 +74,7 @@ UserSchema.methods.toJSON = function () {
   const obj = this.toObject();
   delete obj.password;
   delete obj.verificationToken;
+  delete obj.blockedBy; // Remove populated reference to keep response clean
     return obj;
 };
 

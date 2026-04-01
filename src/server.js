@@ -13,6 +13,7 @@ const authRoutes = require('./routes/auth');
 const companyRoutes = require('./routes/companies');
 const tagRoutes = require('./routes/tags');
 const taskRoutes = require('./routes/tasks');
+const adminRoutes = require('./routes/admin');
 
 // Initialize express app
 const app = express();
@@ -47,6 +48,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/companies', companyRoutes);
 app.use('/api/tags', tagRoutes);
 app.use('/api/tasks', taskRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

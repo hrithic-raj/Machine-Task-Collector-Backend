@@ -766,8 +766,11 @@ router.put('/:id', protect, uploadMultiple, uploadErrorHandler, async (req, res)
       });
     }
 
-    // Check if user is the owner
-    if (task.submittedBy.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+    // Check if user is the owner or has admin/super_admin role
+    if (
+      task.submittedBy.toString() !== req.user._id.toString() &&
+      !['admin', 'super_admin'].includes(req.user.role)
+    ) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to update this task',
@@ -977,8 +980,11 @@ router.delete('/:id', protect, async (req, res) => {
       });
     }
 
-    // Check if user is the owner or admin
-    if (task.submittedBy.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+    // Check if user is the owner or has admin/super_admin role
+    if (
+      task.submittedBy.toString() !== req.user._id.toString() &&
+      !['admin', 'super_admin'].includes(req.user.role)
+    ) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to delete this task',

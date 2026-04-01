@@ -40,6 +40,14 @@ exports.protect = async (req, res, next) => {
       });
     }
 
+    // Check if user is blocked
+    if (user.isBlocked) {
+      return res.status(403).json({
+        success: false,
+        message: 'Your account has been blocked. Please contact support.',
+      });
+    }
+
     // Add user to request object
     req.user = user;
     next();
