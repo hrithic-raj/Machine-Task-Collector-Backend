@@ -258,7 +258,12 @@ router.post('/login', async (req, res) => {
 
 // POST /api/auth/logout - Logout user (clear cookie)
 router.post('/logout', (req, res) => {
-  res.clearCookie('token');
+  // Clear cookie with same options as when it was set to ensure proper deletion
+  res.clearCookie('token', {
+    path: '/',
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+  });
   res.json({
     success: true,
     message: 'Logged out successfully',
