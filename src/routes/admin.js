@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const MachineTask = require('../models/MachineTask');
+const Company = require('../models/Company');
 const { protect, authorize } = require('../middleware/auth');
 
 // GET /api/admin/statistics - Get admin dashboard statistics
@@ -35,6 +36,9 @@ router.get('/statistics', protect, authorize('admin', 'super_admin'), async (req
       createdAt: { $gte: sevenDaysAgo },
     });
 
+    // Get company statistics
+    const totalCompanies = await Company.countDocuments();
+
     res.json({
       success: true,
       data: {
@@ -50,6 +54,9 @@ router.get('/statistics', protect, authorize('admin', 'super_admin'), async (req
           total: totalTasks,
           recent: recentTasks,
           byTechStack: tasksByTechStack,
+        },
+        companies: {
+          total: totalCompanies,
         },
         recentRegistrations,
       },
@@ -326,7 +333,7 @@ router.put('/users/:id/unblock', protect, authorize('admin', 'super_admin'), asy
 });
 
 // PUT /api/admin/users/:id/role - Change user role
-router.put('/users/:id/role', protect, authorize('admin', 'super_admin'), async (req, res) => {
+router.put('/users/:id/role', protect, authorize('super_admin'), async (req, res) => {
   try {
     const { role } = req.body;
     const user = await User.findById(req.params.id);

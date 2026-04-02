@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Company = require('../models/Company');
-const { protect } = require('../middleware/auth');
+const { protect, authorize } = require('../middleware/auth');
 
 // GET /api/companies - Get all companies (with optional search)
 router.get('/', protect, async (req, res) => {
@@ -101,6 +101,68 @@ router.get('/:id', protect, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while fetching company',
+    });
+  }
+});
+
+// PUT /api/companies/:id - Update a company
+router.put('/:id', protect, authorize('admin', 'super_admin'), async (req, res) => {
+  try {
+    const { name, place, contactEmail, contactPhone } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Company name is required',
+      });
+    }
+
+    // Find company
+    const company = await Company.findById(req.params.id);
+
+    if (!company) {
+      return res.status(404).json({
+        success: false,
+        message: 'Company not found',
+      });
+    }
+
+    // Check if name is being changed and if it conflicts with another company
+    if (name.trim() !== company.name) {
+      const existingCompany = await Company.findOne({
+        name: { $regex: `^${name.trim()}$`, $options: 'i' },
+        _id: { $ne: company._id }, // Exclude current company
+      });
+
+      if (existingCompany) {
+        return res.status(400).json({
+          success: false,
+          message: 'Company with this name already exists',
+          data: existingCompany,
+        });
+      }
+    }
+
+    // Update fields
+    company.name = name.trim();
+    company.place = place || '';
+    company.contactEmail = contactEmail || '';
+    company.contactPhone = contactPhone || '';
+    // Note: createdBy should not be changed
+
+    await company.save();
+
+    res.json({
+      success: true,
+      message: 'Company updated successfully',
+      data: company,
+    });
+  } catch (error) {
+    console.error('Update company error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while updating company',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
     });
   }
 });
