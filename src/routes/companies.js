@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const Company = require('../models/Company');
+const MachineTask = require('../models/MachineTask');
 const { protect, authorize } = require('../middleware/auth');
-
 // GET /api/companies - Get all companies (with optional search)
 router.get('/', protect, async (req, res) => {
   try {
@@ -162,6 +162,45 @@ router.put('/:id', protect, authorize('admin', 'super_admin'), async (req, res) 
     res.status(500).json({
       success: false,
       message: 'Server error while updating company',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+});
+
+// DELETE /api/companies/:id - Delete a company
+router.delete('/:id', protect, authorize('admin', 'super_admin'), async (req, res) => {
+  try {
+    const company = await Company.findById(req.params.id);
+
+    if (!company) {
+      return res.status(404).json({
+        success: false,
+        message: 'Company not found',
+      });
+    }
+
+    // Check if company is being used by any tasks
+    const tasksUsingCompany = await MachineTask.countDocuments({ company: company._id });
+
+    if (tasksUsingCompany > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete company because it is being used by tasks',
+        data: { tasksUsingCompany },
+      });
+    }
+
+    await Company.findByIdAndDelete(req.params.id);
+
+    res.json({
+      success: true,
+      message: 'Company deleted successfully',
+    });
+  } catch (error) {
+    console.error('Delete company error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while deleting company',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined,
     });
   }
