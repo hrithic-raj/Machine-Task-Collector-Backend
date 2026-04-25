@@ -14,7 +14,7 @@ const MachineTaskSchema = new mongoose.Schema(
     techStack: [
       {
         type: String,
-        enum: ['MERN', 'Python', 'Dotnet', 'Frontend', 'GoLang', 'JAVA'],
+        enum: ['MERN', 'Python', 'Dotnet', 'Frontend', 'GoLang', 'JAVA', 'Flutter', 'DA', 'DS', 'Testing'],
       },
     ],
     company: {
